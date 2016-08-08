@@ -161,7 +161,7 @@ public final class Signal<Value, Error: Swift.Error> {
 
 		if let token = token {
 			return ActionDisposable { [weak self] in
-				_ = self?.state.modify { state in
+				self?.state.modify { state -> Void in
 					state?.observers.remove(using: token)
 					if state?.observers.isEmpty ?? false {
 						state!.retainedSignal = nil
@@ -894,17 +894,18 @@ extension SignalProtocol {
 			disposable += self.observe { event in
 				switch event {
 				case let .next(value):
-					state.modify { st in
-						st.latestValue = value
+					state.modify {
+						$0.latestValue = value
 					}
 				case let .failed(error):
 					observer.sendFailed(error)
 				case .completed:
-					let oldState = state.modify { st in
+					let shouldComplete = state.modify { st -> Bool in
 						st.isSignalCompleted = true
+						return st.isSamplerCompleted
 					}
 					
-					if oldState.isSamplerCompleted {
+					if shouldComplete {
 						observer.sendCompleted()
 					}
 				case .interrupted:
@@ -919,11 +920,12 @@ extension SignalProtocol {
 						observer.sendNext((value, samplerValue))
 					}
 				case .completed:
-					let oldState = state.modify { st in
+					let shouldComplete = state.modify { st -> Bool in
 						st.isSamplerCompleted = true
+						return st.isSignalCompleted
 					}
 					
-					if oldState.isSignalCompleted {
+					if shouldComplete {
 						observer.sendCompleted()
 					}
 				case .interrupted:
@@ -1459,14 +1461,16 @@ extension SignalProtocol {
 				}
 
 				schedulerDisposable.innerDisposable = scheduler.schedule(after: scheduleDate) {
-					let previousState = state.modify { state in
-						if state.pendingValue != nil {
+					let pendingValue = state.modify { state -> Value? in
+						let pendingValue = state.pendingValue
+						if pendingValue != nil {
 							state.pendingValue = nil
 							state.previousDate = scheduleDate
 						}
+						return pendingValue
 					}
 					
-					if let pendingValue = previousState.pendingValue {
+					if let pendingValue = pendingValue {
 						observer.sendNext(pendingValue)
 					}
 				}

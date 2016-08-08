@@ -1736,19 +1736,21 @@ extension SignalProducer {
 			let replayBuffer = ReplayBuffer<Value>()
 			var replayValues: [Value] = []
 			var replayToken: RemovalToken?
-			var next = state.modify { state in
+
+			var terminationEvent = state.modify { state -> Event<Value, Error>? in
 				replayValues = state.values
 				if replayValues.isEmpty {
 					token = state.observers?.insert(observer)
 				} else {
 					replayToken = state.replayBuffers.insert(replayBuffer)
 				}
+				return state.terminationEvent
 			}
 
 			while !replayValues.isEmpty {
 				replayValues.forEach(observer.sendNext)
 
-				next = state.modify { state in
+				terminationEvent = state.modify { state -> Event<Value, Error>? in
 					replayValues = replayBuffer.values
 					replayBuffer.values = []
 					if replayValues.isEmpty {
@@ -1757,10 +1759,11 @@ extension SignalProducer {
 						}
 						token = state.observers?.insert(observer)
 					}
+					return state.terminationEvent
 				}
 			}
 
-			if let terminationEvent = next.terminationEvent {
+			if let terminationEvent = terminationEvent {
 				observer.action(terminationEvent)
 			}
 
@@ -1774,7 +1777,8 @@ extension SignalProducer {
 		}
 
 		let bufferingObserver: Signal<Value, Error>.Observer = Observer { event in
-			let originalState = state.modify { state in
+			let observers = state.modify { state -> Bag<Signal<Value, Error>.Observer>? in
+				let observers = state.observers
 				if let value = event.value {
 					state.add(value, upTo: capacity)
 				} else {
@@ -1783,9 +1787,10 @@ extension SignalProducer {
 					state.terminationEvent = event
 					state.observers = nil
 				}
+				return observers
 			}
 
-			originalState.observers?.forEach { $0.action(event) }
+			observers?.forEach { $0.action(event) }
 		}
 
 		return (producer, bufferingObserver)
